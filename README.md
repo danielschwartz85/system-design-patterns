@@ -25,7 +25,7 @@ Three techniques that appear inside several patterns get a full "why it exists, 
 - **Optimistic concurrency control**: in [Dealing with Contention](patterns/03-contention.html)
 - **The saga pattern**: in [Multi-Step Processes](patterns/07-multi-step-processes.html)
 
-[Scaling Writes](patterns/02-scaling-writes.html) also compares work queues with pub/sub, and Kafka with RabbitMQ.
+[Long-Running Tasks](patterns/05-long-running-tasks.html#messaging-models) also compares work queues with pub/sub, and Kafka with RabbitMQ (with a short answer in [Scaling Writes](patterns/02-scaling-writes.html)).
 
 ## Viewing it
 

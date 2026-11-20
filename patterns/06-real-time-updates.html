@@ -307,7 +307,7 @@ data: {"minute":67}
   </figure>
 
   <h4>Choosing the pub/sub layer</h4>
-  <p>Pub/sub (every subscriber gets every message) is a different model from a work queue (each message goes to one worker). The two are compared, along with Kafka vs RabbitMQ, in <a href="02-scaling-writes.html#messaging-models">Scaling Writes</a>.</p>
+  <p>Pub/sub (every subscriber gets every message) is a different model from a work queue (each message goes to one worker). The two are compared, along with Kafka vs RabbitMQ, in <a href="05-long-running-tasks.html#messaging-models">Long-Running Tasks</a>.</p>
   <ul>
     <li><strong>Redis Pub/Sub:</strong> extremely fast and simple, but <em>fire-and-forget</em>. If a subscriber is disconnected or slow when a message is published, the message is simply gone, and nothing is stored. Fine for ephemeral signals (typing indicators, presence, cursor positions) or when durability lives elsewhere.</li>
     <li><strong>Redis Streams, Kafka, Kinesis, Google Pub/Sub, SNS+SQS:</strong> durable logs or queues. Messages are persisted and can be replayed from an offset, which supports catch-up after a reconnect. Kafka suits very high throughput, but one topic per user does not scale, so you partition by user or room id and have gateways filter. Per-subscriber queues (SQS-style) can give each gateway its own mailbox.</li>

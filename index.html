@@ -100,7 +100,7 @@
       <tbody>
         <tr><td>Consistent hashing</td><td>Add or remove a shard or server without remapping almost every key.</td><td><a href="patterns/02-scaling-writes.html">02 · Scaling Writes</a>, applied in <a href="patterns/06-real-time-updates.html">06 · Real-Time Updates</a></td></tr>
         <tr><td>Optimistic concurrency control</td><td>Avoid holding locks when conflicts are rare; detect and retry instead.</td><td><a href="patterns/03-contention.html">03 · Dealing with Contention</a></td></tr>
-        <tr><td>Queue vs pub/sub, Kafka vs RabbitMQ</td><td>Pick the right messaging model: one worker per message (work queue) or every subscriber gets every message (pub/sub).</td><td><a href="patterns/02-scaling-writes.html#messaging-models">02 · Scaling Writes</a>, also referenced in <a href="patterns/05-long-running-tasks.html">05</a> and <a href="patterns/06-real-time-updates.html">06</a></td></tr>
+        <tr><td>Queue vs pub/sub, Kafka vs RabbitMQ</td><td>Pick the right messaging model: one worker per message (work queue) or every subscriber gets every message (pub/sub).</td><td><a href="patterns/05-long-running-tasks.html#messaging-models">05 · Long-Running Tasks</a>, with short answers in <a href="patterns/02-scaling-writes.html">02</a> and a pointer from <a href="patterns/06-real-time-updates.html">06</a></td></tr>
         <tr><td>Saga pattern</td><td>Keep a business process consistent across services without a distributed transaction.</td><td><a href="patterns/07-multi-step-processes.html">07 · Multi-Step Processes</a>, summarized in <a href="patterns/03-contention.html">03</a></td></tr>
       </tbody>
     </table>

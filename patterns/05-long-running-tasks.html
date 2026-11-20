@@ -114,7 +114,7 @@
   </div>
 
   <h3><span class="step">Step 1</span>Queue plus worker pool</h3>
-  <p>Put a <strong>message queue</strong> between the thing that accepts requests and the thing that does the work. The API server does the cheap, bounded part: authenticate, validate, store a job record, enqueue a message and return. A separate fleet of <strong>workers</strong> (processes that loop forever, pulling a message, doing the work, acknowledging it) does the expensive part.</p>
+  <p>Put a <strong>message queue</strong> between the thing that accepts requests and the thing that does the work. The API server does the cheap, bounded part: authenticate, validate, store a job record, enqueue a message and return. A separate fleet of <strong>workers</strong> (processes that loop forever, pulling a message, doing the work, acknowledging it) does the expensive part. (Choosing between a work queue and pub/sub, and between SQS, RabbitMQ and Kafka, is covered in the <a href="#messaging-models">deep dive at the end of this section</a>.)</p>
 
   <figure class="diagram">
     <svg viewBox="0 0 770 300" role="img" aria-label="Architecture: client sends a request to the API, which writes a job record and enqueues a message; workers pull from the queue, write results to a result store and update the job store; failed messages go to a dead-letter queue">
@@ -434,6 +434,178 @@ delay = random.uniform(0, delay)          # "full jitter": spread retries out</c
     <li><strong>Recurring jobs (cron):</strong> nightly reports, cleanup. Run the scheduler as a single leader or use a distributed lock, otherwise every instance fires the job and you get N duplicates. Make the job itself idempotent anyway.</li>
     <li><strong>Workflow engines:</strong> a queue is great for a single unit of work. Once the work is many dependent steps over hours or days, with branching, waiting for humans or external events, timers and compensation when a step fails, hand-rolling it on queues turns into a tangle of state machines. Use a durable workflow engine such as Temporal, AWS Step Functions or Airflow. See <a href="07-multi-step-processes.html">Multi-Step Processes</a>.</li>
   </ul>
+
+  <h3 id="messaging-models"><span class="step">Deep dive</span>Queues, pub/sub and brokers</h3>
+  <p>"Put a queue in front of it" hides two decisions: which <em>messaging model</em> you want (a work queue or publish/subscribe), and which <em>broker</em> implements it (Kafka, RabbitMQ, SQS and so on). They are often confused, so it is worth separating them.</p>
+
+  <div class="callout recognize">
+    <span class="callout-title">The short answer</span>
+    <p><strong>Offloading work through a queue is a producer/consumer problem.</strong> Each write must be applied <em>once</em>, by <em>one</em> writer, at a steady rate the database can sustain. That is a work queue with competing consumers, partitioned by the shard key.</p>
+    <p><strong>Add pub/sub on top, not instead,</strong> when the same write must also reach other systems (search index, cache invalidation, analytics, notifications). Each of those is a separate subscription with its own lag and failures.</p>
+    <p><strong>Which broker:</strong> for plain "absorb the spike and write asynchronously", <strong>a simple work queue is the default: SQS or RabbitMQ.</strong> They give you per-message acks, retries, a dead-letter queue and easy consumer scaling, with little to run. <strong>Kafka is a distributed log</strong> whose natural model is publish/subscribe. It can behave like a queue through consumer groups, but with real limits. Reach for it only when you need very high sustained volume, strict per-key ordering at scale, replay, or several downstream systems reading the same stream.</p>
+  </div>
+
+  <h4>Two messaging models</h4>
+  <ul>
+    <li><strong>Producer/consumer (point-to-point, "work queue", competing consumers).</strong> Producers put messages on a queue. Several consumers read from the <em>same</em> queue, and each message goes to <strong>exactly one</strong> of them. Once it is acknowledged, it is gone. Its purpose is to <strong>distribute work and level load</strong>, and you scale it by adding consumers.</li>
+    <li><strong>Publish/subscribe (pub/sub, "fan-out").</strong> Publishers send messages to a topic without knowing who is listening. Every <em>subscription</em> receives its <strong>own copy of every message</strong>. Its purpose is to <strong>decouple a producer from many independent interested parties</strong>. Adding a subscriber adds another reader of the same data, not more throughput for anyone else.</li>
+  </ul>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 780 250" role="img" aria-label="Left: a queue with three competing consumers, each message goes to one consumer. Right: a topic with three subscribers, each subscriber receives every message.">
+      <line class="l dash" x1="390" y1="12" x2="390" y2="236"/>
+
+      <text class="t t-mid" x="195" y="24">Producer / consumer (queue)</text>
+      <rect class="n" x="8" y="98" width="76" height="44" rx="8"/><text class="t t-mid" x="46" y="125">Producer</text>
+      <rect class="n-w" x="112" y="78" width="84" height="84" rx="8"/>
+      <text class="t t-mid" x="154" y="116">Queue</text><text class="t-s t-mid" x="154" y="134">m1 m2 m3</text>
+      <line class="l" x1="84" y1="120" x2="110" y2="120" marker-end="url(#arrow)"/>
+      <rect class="n-g" x="252" y="44" width="118" height="38" rx="8"/><text class="t t-mid" x="311" y="67">Consumer A</text>
+      <rect class="n-g" x="252" y="101" width="118" height="38" rx="8"/><text class="t t-mid" x="311" y="124">Consumer B</text>
+      <rect class="n-g" x="252" y="158" width="118" height="38" rx="8"/><text class="t t-mid" x="311" y="181">Consumer C</text>
+      <line class="l-g" x1="196" y1="108" x2="250" y2="66" marker-end="url(#arrow)"/>
+      <line class="l-g" x1="196" y1="120" x2="250" y2="120" marker-end="url(#arrow)"/>
+      <line class="l-g" x1="196" y1="132" x2="250" y2="174" marker-end="url(#arrow)"/>
+      <text class="t-g t-mid" x="195" y="218">Each message goes to ONE consumer.</text>
+      <text class="t-s t-mid" x="195" y="235">More consumers = more throughput.</text>
+
+      <text class="t t-mid" x="585" y="24">Publish / subscribe (topic)</text>
+      <rect class="n" x="398" y="98" width="76" height="44" rx="8"/><text class="t t-mid" x="436" y="125">Publisher</text>
+      <rect class="n-a" x="502" y="78" width="84" height="84" rx="8"/>
+      <text class="t t-mid" x="544" y="116">Topic</text><text class="t-s t-mid" x="544" y="134">m1 m2 m3</text>
+      <line class="l" x1="474" y1="120" x2="500" y2="120" marker-end="url(#arrow)"/>
+      <rect class="n-a" x="642" y="44" width="128" height="38" rx="8"/><text class="t t-mid" x="706" y="67">Subscriber A</text>
+      <rect class="n-a" x="642" y="101" width="128" height="38" rx="8"/><text class="t t-mid" x="706" y="124">Subscriber B</text>
+      <rect class="n-a" x="642" y="158" width="128" height="38" rx="8"/><text class="t t-mid" x="706" y="181">Subscriber C</text>
+      <line class="l-a" x1="586" y1="108" x2="640" y2="66" marker-end="url(#arrow)"/>
+      <line class="l-a" x1="586" y1="120" x2="640" y2="120" marker-end="url(#arrow)"/>
+      <line class="l-a" x1="586" y1="132" x2="640" y2="174" marker-end="url(#arrow)"/>
+      <text class="t-a t-mid" x="585" y="218">Each subscriber gets EVERY message.</text>
+      <text class="t-s t-mid" x="585" y="235">Adding one adds a reader, not speed.</text>
+    </svg>
+    <figcaption>Same boxes, opposite semantics: a queue divides the messages among consumers; a topic copies them to every subscriber.</figcaption>
+  </figure>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Producer/consumer (queue)</th><th>Publish/subscribe (topic)</th></tr></thead>
+      <tbody>
+        <tr><td>Who receives a message</td><td>One consumer out of a group of competing consumers</td><td>Every subscription, each gets a copy</td></tr>
+        <tr><td>What happens to it</td><td>Removed after acknowledgement (in a log such as Kafka, retained but marked consumed by an offset)</td><td>Stays available to each subscription until that subscription has consumed it (or retention expires)</td></tr>
+        <tr><td>Adding a consumer</td><td>Drains the backlog faster (up to any partition limit)</td><td>Adds another independent reader; existing ones are unaffected</td></tr>
+        <tr><td>Failure isolation</td><td>A failing consumer's messages are retried by another consumer in the group</td><td>One slow or broken subscriber does not slow the others, it just builds its own backlog</td></tr>
+        <tr><td>Typical use</td><td>Background jobs, write buffering, load leveling</td><td>Events: "order placed", "post liked", cache invalidation, notifications</td></tr>
+        <tr><td>Examples</td><td>SQS standard queue, RabbitMQ queue with several consumers, Kafka consumer group</td><td>SNS, Google Pub/Sub, RabbitMQ fanout exchange, several Kafka consumer groups on one topic</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>The two are not mutually exclusive</h4>
+  <p>Real systems combine them: <strong>fan out first, then give every subscriber its own queue</strong>, where that subscriber's workers compete for messages.</p>
+  <ul>
+    <li><strong>SNS + SQS:</strong> publish once to an SNS topic, and each subscribing service has its own SQS queue with its own workers.</li>
+    <li><strong>RabbitMQ:</strong> a <em>fanout</em> or <em>topic</em> exchange copies each message into every bound queue. Each queue can have several competing consumers.</li>
+    <li><strong>Google Pub/Sub:</strong> a topic has several <em>subscriptions</em>. Each subscription is, in effect, a queue shared by that subscriber's workers.</li>
+    <li><strong>Kafka:</strong> one topic read by several <em>consumer groups</em>. Within a group, each partition goes to one consumer (queue semantics). Across groups, every group sees every message (pub/sub semantics).</li>
+  </ul>
+
+  <h4>Applying it to a write path</h4>
+  <p>A common use of a queue outside of job processing is buffering database writes (see <a href="02-scaling-writes.html">Scaling Writes</a>). Work through what that write path needs:</p>
+  <ol>
+    <li><strong>Each write must be applied exactly once to the database.</strong> That points to a work queue with competing consumers. In a pure pub/sub fan-out where three subscribers all write the same row to the same database, you would write it three times, which is an anti-pattern.</li>
+    <li><strong>You are protecting the database's throughput.</strong> The consumers' job is to drain at a steady rate the database can sustain. More consumers means a faster drain, up to what the database allows.</li>
+    <li><strong>Align partitions with shards.</strong> Key the queue by the same key you shard on. Messages for one key go to one partition and so to one consumer. That preserves per-key order, avoids two writers fighting over the same row (see <a href="03-contention.html">Contention</a>), and lets each consumer batch writes for its own shard. The key-to-partition mapping works like the key-to-shard mapping described under <a href="02-scaling-writes.html#consistent-hashing">consistent hashing</a>. You do not need Kafka for this: SQS FIFO queues give per-key ordering through <em>message group IDs</em>, and with RabbitMQ you can run one queue per shard (or use a consistent-hash exchange) with one consumer each.</li>
+    <li><strong>Apply pub/sub for everything else that cares about the write.</strong> Search indexing, cache invalidation, analytics and notifications are separate consumer groups or subscriptions on the same stream. Each has its own lag and can fail or be replayed independently, without touching the write path.</li>
+    <li><strong>Make the consumers idempotent and acknowledge late.</strong> Delivery is at-least-once, so use upserts or event IDs to dedupe. Commit the offset or send the ack only <em>after</em> the database write succeeds. Acknowledging first loses a write if the consumer crashes in between.</li>
+  </ol>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 780 350" role="img" aria-label="Write path: the API publishes to a topic keyed by shard key with three partitions. Consumer group A, the database writers, takes one partition each and writes to its shard. Consumer groups B and C, a search indexer and analytics, also subscribe to the same topic independently.">
+      <rect class="n" x="8" y="140" width="90" height="50" rx="8"/><text class="t t-mid" x="53" y="170">API</text>
+      <line class="l" x1="98" y1="165" x2="138" y2="165" marker-end="url(#arrow)"/>
+
+      <rect class="n-a" x="140" y="70" width="170" height="190" rx="10"/>
+      <text class="t t-mid" x="225" y="92">Topic: writes</text>
+      <text class="t-s t-mid" x="225" y="108">keyed by shard key</text>
+      <rect class="n-w" x="156" y="122" width="138" height="34" rx="6"/><text class="t t-mid" x="225" y="144">Partition 0</text>
+      <rect class="n-w" x="156" y="170" width="138" height="34" rx="6"/><text class="t t-mid" x="225" y="192">Partition 1</text>
+      <rect class="n-w" x="156" y="218" width="138" height="34" rx="6"/><text class="t t-mid" x="225" y="240">Partition 2</text>
+
+      <text class="t-g t-mid" x="500" y="108">Consumer group A: database writers (queue semantics)</text>
+      <rect class="n-g" x="380" y="122" width="110" height="34" rx="6"/><text class="t t-mid" x="435" y="144">Writer 0</text>
+      <rect class="n-g" x="380" y="170" width="110" height="34" rx="6"/><text class="t t-mid" x="435" y="192">Writer 1</text>
+      <rect class="n-g" x="380" y="218" width="110" height="34" rx="6"/><text class="t t-mid" x="435" y="240">Writer 2</text>
+      <line class="l-g" x1="294" y1="139" x2="378" y2="139" marker-end="url(#arrow)"/>
+      <line class="l-g" x1="294" y1="187" x2="378" y2="187" marker-end="url(#arrow)"/>
+      <line class="l-g" x1="294" y1="235" x2="378" y2="235" marker-end="url(#arrow)"/>
+      <rect class="n" x="560" y="122" width="100" height="34" rx="6"/><text class="t t-mid" x="610" y="144">Shard 0</text>
+      <rect class="n" x="560" y="170" width="100" height="34" rx="6"/><text class="t t-mid" x="610" y="192">Shard 1</text>
+      <rect class="n" x="560" y="218" width="100" height="34" rx="6"/><text class="t t-mid" x="610" y="240">Shard 2</text>
+      <line class="l" x1="490" y1="139" x2="558" y2="139" marker-end="url(#arrow)"/>
+      <line class="l" x1="490" y1="187" x2="558" y2="187" marker-end="url(#arrow)"/>
+      <line class="l" x1="490" y1="235" x2="558" y2="235" marker-end="url(#arrow)"/>
+
+      <rect class="n-a" x="380" y="276" width="170" height="34" rx="6"/><text class="t-a t-mid" x="465" y="298">Group B: search indexer</text>
+      <rect class="n-a" x="570" y="276" width="170" height="34" rx="6"/><text class="t-a t-mid" x="655" y="298">Group C: analytics</text>
+      <path class="l-a" d="M200 262 V293 H378" marker-end="url(#arrow)"/>
+      <path class="l-a" d="M250 262 V326 H655 V312" marker-end="url(#arrow)"/>
+
+      <text class="t-s" x="8" y="345">Groups B and C are pub/sub subscribers: each tracks its own offsets, has its own lag, and can fail or be replayed independently.</text>
+    </svg>
+    <figcaption>A queue for the write path (group A, one writer per partition), with pub/sub subscribers (groups B, C) hanging off the same topic.</figcaption>
+  </figure>
+
+  <h4>Kafka vs RabbitMQ</h4>
+  <p>Both can run the write path, but they are built on different ideas.</p>
+  <ul>
+    <li><strong>Kafka is a distributed commit log.</strong> A topic is split into <em>partitions</em>. Each partition is an ordered, append-only log replicated across brokers (one leader, several followers). Consumers <em>pull</em> and track their own position, called an <em>offset</em>. Messages are <strong>retained</strong> for a configured time or size (or compacted to keep the latest value per key) whether or not anyone has consumed them. Ordering is guaranteed <em>within a partition</em> only. In a consumer group each partition is read by at most one consumer, so parallelism is capped by the partition count. Producers choose the partition, usually by hashing a key.</li>
+    <li><strong>RabbitMQ is a smart broker.</strong> Producers publish to an <em>exchange</em> (types: direct, topic, fanout, headers). Bindings route the message to one or more <em>queues</em>. The broker <em>pushes</em> messages to consumers, limited by a prefetch count, and tracks each message's acknowledgement. An acknowledged message is deleted. A negative-acknowledged one is requeued or dead-lettered. It has per-message and per-queue TTLs, priority queues, dead-letter exchanges and flexible routing built in. Quorum queues (Raft-replicated) are the durable choice, and a separate <em>streams</em> feature offers a Kafka-like replayable log.</li>
+  </ul>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Kafka</th><th>RabbitMQ</th></tr></thead>
+      <tbody>
+        <tr><td>Core model</td><td>Partitioned, replicated, retained log; consumers pull and track offsets</td><td>Exchanges and queues; broker pushes and tracks per-message acks</td></tr>
+        <tr><td>Throughput</td><td>Very high: commonly hundreds of thousands to millions of messages per second across a cluster, thanks to sequential I/O and batching</td><td>Good: commonly tens of thousands of messages per second per node, depending on message size and durability settings</td></tr>
+        <tr><td>Latency</td><td>Low, with some batching delay</td><td>Very low for individual messages</td></tr>
+        <tr><td>Ordering</td><td>Strict within a partition; none across partitions</td><td>FIFO within a queue, but with several consumers or redeliveries order is not preserved</td></tr>
+        <tr><td>Retention and replay</td><td>Built in: re-read from any offset, rebuild a new consumer from history</td><td>Messages are deleted once acknowledged (replay only with streams)</td></tr>
+        <tr><td>Scaling consumers</td><td>Up to the number of partitions per group; rebalances when consumers join or leave</td><td>Add consumers to a queue freely; messages are spread among them</td></tr>
+        <tr><td>Retries, delays, priorities</td><td>Not built in. You build retry topics, delayed topics and separate topics per priority</td><td>Built in: nack and requeue, TTLs, dead-letter exchanges, priority queues</td></tr>
+        <tr><td>Routing</td><td>Topic and partition key only</td><td>Rich: direct, topic patterns, fanout, headers</td></tr>
+        <tr><td>Operations</td><td>More to size and tune (partitions, replication, retention). Recent versions run without ZooKeeper (KRaft)</td><td>Simpler to start. Needs care with queue growth and memory, and clustering across regions is awkward</td></tr>
+        <tr><td>Natural identity</td><td>Event log with publish/subscribe semantics. Queue behaviour comes from consumer groups, within the partition limits above</td><td>Work queue. Competing consumers, per-message ack and retry are the core model (SQS plays the same role on AWS)</td></tr>
+        <tr><td>Best fit</td><td>High-volume ingest, per-key ordering, replay, many downstream consumers, stream processing. Overkill for simply offloading work asynchronously</td><td>Async offload, task queues, request routing, per-message retry and priority logic, moderate volume</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>Choosing for a write path.</strong> Start from the job: you want a durable buffer that smooths a spike, with a retry and a dead-letter queue, so the database is written at a steady rate. That is exactly what <strong>SQS or RabbitMQ</strong> are built for, they are simple to operate, and they are the right default. SQS is the zero-ops choice on AWS; RabbitMQ is the choice when you also want rich routing, priorities or low latency and can run a broker.</p>
+  <p><strong>Move to Kafka only when you can name the reason:</strong></p>
+  <ul>
+    <li><strong>Sustained very high volume</strong> (say 100K or more writes per second), where a log's sequential I/O and batching matter.</li>
+    <li><strong>Strict per-key ordering at that scale</strong>, via partitions.</li>
+    <li><strong>Replay:</strong> you need to re-read history to rebuild a consumer, fix a bug, or backfill a new system.</li>
+    <li><strong>Many independent consumers</strong> of the same stream (the pub/sub side of Kafka), such as search, analytics and a data lake.</li>
+  </ul>
+  <p>If none of those apply, Kafka adds partition planning, rebalances, and retry topics you must build yourself, for no benefit. Other managed options include Kinesis, Google Pub/Sub, and Apache Pulsar (which supports both queue-style and pub/sub-style subscriptions). Redpanda speaks the Kafka protocol with a different implementation.</p>
+
+  <h4>Pitfalls specific to this choice</h4>
+  <ul>
+    <li><strong>Plan the partition count up front.</strong> It caps consumer parallelism. Adding partitions later changes the key-to-partition mapping (with default hash-modulo placement), which can break per-key ordering during the change. Over-provision moderately instead of starting at one.</li>
+    <li><strong>Hot keys make hot partitions.</strong> One viral key sends all its traffic to one partition and one consumer. Salt the key or coalesce before enqueueing (see <a href="02-scaling-writes.html#hot-keys">Hot shards and hot keys</a> in Scaling Writes).</li>
+    <li><strong>Watch consumer lag.</strong> It is your headroom signal. Alert on lag growth and on the age of the oldest message.</li>
+    <li><strong>Rebalances pause consumption.</strong> When consumers join or leave a Kafka group, partitions are reassigned and processing briefly stalls. Avoid flapping consumers.</li>
+    <li><strong>At-least-once means duplicates.</strong> Make writes idempotent, and commit or ack after the database write, never before.</li>
+    <li><strong>A poison message blocks its partition.</strong> In an ordered log, one message that always fails stops everything behind it. Send it to a dead-letter or retry topic after a few attempts.</li>
+    <li><strong>Retention is a cost and a promise.</strong> Longer retention allows deeper replay but costs disk. Size it for how far back you may need to rebuild a consumer.</li>
+  </ul>
+
+  <div class="callout interview">
+    <span class="callout-title">If asked: queue or pub/sub, Kafka or RabbitMQ?</span>
+    <blockquote>"For the write path itself I want a work queue with competing consumers, because each write must be applied once at a rate the database can take. My default is a simple managed queue like SQS, or RabbitMQ, since they give me acks, retries and a dead-letter queue with little to run. I'd key it by the shard key so each key has one writer and order is kept. I'd only move to Kafka if I needed very high sustained throughput, replay, or several other systems, like search and analytics, reading the same events as separate consumer groups."</blockquote>
+  </div>
 </section>
 
 <section>
@@ -470,7 +642,7 @@ delay = random.uniform(0, delay)          # "full jitter": spread retries out</c
 
 <section>
   <h2 id="tech">Technology options</h2>
-  <p>For the broader comparison of the work-queue model vs publish/subscribe, and a side-by-side of Kafka and RabbitMQ, see <a href="02-scaling-writes.html#messaging-models">Queues, pub/sub and brokers</a> in Scaling Writes.</p>
+  <p>For the broader comparison of the work-queue model vs publish/subscribe, and a side-by-side of Kafka and RabbitMQ, see <a href="#messaging-models">Queues, pub/sub and brokers</a> in the Solutions section above.</p>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Option</th><th>Model</th><th>Fits when</th><th>Notes</th></tr></thead>
@@ -548,8 +720,20 @@ delay = random.uniform(0, delay)          # "full jitter": spread retries out</c
 
   <details class="qa"><summary>Why not just use Kafka for this?</summary>
     <div class="answer">
-      <p><em>Short version below; the full Kafka vs RabbitMQ comparison is in <a href="02-scaling-writes.html#messaging-models">Scaling Writes</a>.</em></p>
+      <p><em>Short version below; the full Kafka vs RabbitMQ comparison is in <a href="#messaging-models">Queues, pub/sub and brokers</a>.</em></p>
       <p>Kafka is a log, not a task queue. Messages are not removed on consumption; consumers track offsets, and within a consumer group each partition is read by only one consumer, so parallelism is capped by partition count and one slow or poison message blocks everything behind it in that partition. There is no per-message ack, delay or built-in DLQ, so you build retry topics yourself. Kafka shines when you need very high throughput, ordering per key, or replay of history by many independent consumers. For classic "do this task once, retry on failure" work, SQS, RabbitMQ or a Redis-based job library is usually a better fit. In an interview, saying Kafka is acceptable if you explain how you handle retries, ordering and parallelism.</p>
+    </div>
+  </details>
+
+  <details class="qa"><summary>Kafka or RabbitMQ for offloading work or writes?</summary>
+    <div class="answer">
+      <p>For simply offloading writes asynchronously, a work queue is the better default: RabbitMQ, or SQS on AWS. You get per-message acks, retries with dead-letter queues, routing, priorities and delays out of the box, and simple operations. Kafka is a retained log whose natural model is pub/sub. It earns its complexity when you have very high sustained throughput, ordering per key at scale (partition by shard key), a need to replay history, or several downstream consumers on the same stream, and it costs you retries, delays and priorities that you build yourself, plus careful partition planning. State the write rate, the ordering requirement and whether anything else needs the stream, then pick.</p>
+    </div>
+  </details>
+
+  <details class="qa"><summary>How can Kafka behave as both a queue and as pub/sub?</summary>
+    <div class="answer">
+      <p>Through consumer groups. Within one group, each partition is assigned to a single consumer, so the group's consumers share the work: queue semantics. Different groups each track their own offsets and each receives every message: pub/sub semantics. So the database writers form one group, and a search indexer and an analytics job each form their own group on the same topic. Note that Kafka's native strength is the second behaviour, pub/sub over a retained log. Its queue behaviour is real but constrained: parallelism is capped by partition count, there is no per-message ack or retry, and one poison message blocks its partition. That is why a plain work queue is usually the simpler choice when all you need is async offload.</p>
     </div>
   </details>
 
