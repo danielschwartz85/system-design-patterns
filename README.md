@@ -2,6 +2,8 @@
 
 A tutorial on the **8 system design patterns that keep coming up** in system design interviews, written as a small static website: one landing page plus one page per pattern.
 
+[https://danielschwartz85.github.io/system-design-patterns/](https://danielschwartz85.github.io/system-design-patterns/)
+
 Each page explains what the pattern is, why it exists, how it works, the trade-offs an interviewer will probe, concrete technologies, when *not* to use it, and how to say it out loud in an interview. Diagrams are inline SVG and work in light and dark mode.
 
 ## The patterns
