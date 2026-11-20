@@ -6,3 +6,6 @@ transcript-original--system-design.md
 
 # Pages build output
 _site/
+
+# PDF build output
+dist/

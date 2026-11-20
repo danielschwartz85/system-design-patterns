@@ -37,6 +37,17 @@ python3 -m http.server 8000
 # then visit http://localhost:8000
 ```
 
+## Exporting a PDF
+
+To get the whole tutorial (overview plus all eight patterns) as a single PDF:
+
+```bash
+python3 scripts/build-pdf.py
+# writes dist/system-design-patterns.pdf
+```
+
+The script merges every page into one document, expands the Q&A answers, uses the light theme and prints it with headless Chrome. It needs Python 3 and Google Chrome or Chromium on your `PATH`, and no other dependencies. The output goes to `dist/`, which is git-ignored, so rerun the script after changing the content. The script is not part of the published site.
+
 ## Publishing to GitHub Pages
 
 A workflow in [`.github/workflows/pages.yml`](.github/workflows/pages.yml) deploys the site on every push to `main` (or on demand from the Actions tab). One-time setup: in the repository go to **Settings → Pages** and set **Source** to **GitHub Actions**. The site will then be served at `https://<user>.github.io/system-design-patterns/`.
@@ -48,6 +59,7 @@ index.html              landing page: overview, pattern cards, how to use it in 
 patterns/               one HTML page per pattern (same ten sections on every page)
 assets/style.css        design tokens (light/dark), layout and components
 assets/main.js          sidebar, "on this page" table of contents, theme toggle, prev/next links
+scripts/build-pdf.py    builds the single-file PDF export into dist/
 .github/workflows/      GitHub Pages deploy workflow
 ```
 
